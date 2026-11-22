@@ -61,19 +61,24 @@ static void tiny_voca_pulse_train(const std::vector<float> & f0, std::vector<flo
     knots[n_frames] = knots[n_frames - 1];
 
     out.resize((size_t) (n_frames * g::hop));
-    double acc = 0.0;
-    for (int64_t n = 0; n < n_frames * g::hop; n++) {
-        const int64_t low = n / g::hop;
-        const double  w   = (double) (n - low * g::hop) / g::hop;
-        const double  freq = std::exp(knots[low] * (1.0 - w) + knots[low + 1] * w);
-        acc += freq / g::sample_rate;
-        const double theta = std::fmod(2.0 * M_PI * acc, 2.0 * M_PI);
-        const double harmonics = std::max((double) g::harmonic_limit * g::sample_rate / freq, 1.0);
-        const double whole = std::floor(harmonics);
-        const double denom = 2.0 * std::sin(theta / 2.0);
-        const double core  = std::fabs(denom) < 1e-7 ? whole : std::sin((whole + 0.5) * theta) / denom - 0.5;
-        const double wave  = core + (harmonics - whole) * std::cos((whole + 1.0) * theta);
-        out[n] = (float) (wave * std::sqrt(2.0 / harmonics));
+    double acc = 0.0; // phase in cycles, kept in [0, 1)
+    for (int64_t i = 0; i < n_frames; i++) {
+        double freq = std::exp(knots[i]);
+        const double ratio = std::exp((knots[i + 1] - knots[i]) / g::hop);
+        for (int m = 0; m < g::hop; m++, freq *= ratio) {
+            acc += freq / g::sample_rate;
+            acc -= std::floor(acc);
+            const double theta = 2.0 * M_PI * acc;
+            const double harmonics = std::max((double) g::harmonic_limit * g::sample_rate / freq, 1.0);
+            const double whole = std::floor(harmonics);
+            // cos((whole + 1) theta) from the angles below, so only two sin/cos pairs per sample
+            const double h = theta / 2.0;
+            const double a = (whole + 0.5) * theta;
+            const double sh = std::sin(h), ch = std::cos(h), sa = std::sin(a), ca = std::cos(a);
+            const double core = std::fabs(2.0 * sh) < 1e-7 ? whole : sa / (2.0 * sh) - 0.5;
+            const double wave = core + (harmonics - whole) * (ca * ch - sa * sh);
+            out[i * g::hop + m] = (float) (wave * std::sqrt(2.0 / harmonics));
+        }
     }
 }
 
